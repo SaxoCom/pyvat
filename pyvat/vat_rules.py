@@ -228,6 +228,57 @@ class EsVatRules(EuVatRulesMixin):
         return Decimal(21)
 
 
+class DkVatRules(EuVatRulesMixin):
+
+    def get_sale_from_country_vat_charge(self,
+                                         date,
+                                         item_type,
+                                         buyer,
+                                         seller):
+        """
+        Get the VAT charge for selling an item as a seller in the country.
+        """
+        # If the buyer resides outside the EU, we do not have to charge VAT.
+        if buyer.country_code not in EU_COUNTRY_CODES:
+            return VatCharge(VatChargeAction.no_charge, buyer.country_code, 0)
+
+        # Both businesses and consumers are charged VAT in the seller's
+        # country if both seller and buyer reside in the same country.
+        if buyer.country_code == seller.country_code:
+            if not seller.is_business:
+                return VatCharge(VatChargeAction.no_charge,
+                                 buyer.country_code,
+                                 0)
+            else:
+                return VatCharge(VatChargeAction.charge,
+                                 seller.country_code,
+                                 self.get_vat_rate(item_type))
+
+        # Businesses in other EU countries are not charged VAT but are
+        # responsible for accounting for the tax through the reverse-charge
+        # mechanism.
+        if buyer.is_business:
+            return VatCharge(VatChargeAction.reverse_charge,
+                             buyer.country_code,
+                             0)
+
+        # Consumers in other EU countries are charged VAT in their country of
+        # residence after January 1st, 2015. Before this date, you charge VAT
+        # in the country where the company is located.
+        if date >= datetime.date(2015, 1, 1):
+            buyer_rules = VAT_RULES[buyer.country_code]
+
+            return VatCharge(VatChargeAction.charge,
+                             buyer.country_code,
+                             buyer_rules.get_vat_rate(item_type))
+        else:
+            return VatCharge(VatChargeAction.charge,
+                             seller.country_code,
+                             self.get_vat_rate(item_type))
+
+    def get_vat_rate(self, item_type):
+        return Decimal(25)
+
 VAT_RULES = {
     'AT': AtVatRules(),
     'BE': ConstantEuVatRateRules(21),
@@ -235,7 +286,7 @@ VAT_RULES = {
     'CY': ConstantEuVatRateRules(19),
     'CZ': ConstantEuVatRateRules(21),
     'DE': ConstantEuVatRateRules(19),
-    'DK': ConstantEuVatRateRules(25),
+    'DK': DkVatRules(),
     'EE': ConstantEuVatRateRules(20),
     'GR': GrVatRules(),
     'ES': EsVatRules(),
